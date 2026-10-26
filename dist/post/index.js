@@ -39987,10 +39987,18 @@ function describeError(error) {
   return error.message;
 }
 
+function mount(sshPath) {
+  return sshPath.replace(/^\/+|\/+$/g, '');
+}
+
 // Sign publicKey (an OpenSSH public key line) with <sshPath>/sign/<role>.
-async function signKey({ url, token, sshPath, role, publicKey, principals, ttl }) {
-  const path = `${sshPath.replace(/^\/+|\/+$/g, '')}/sign/${role}`;
+// criticalOptions, when given, replace the role's default_critical_options.
+async function signKey({ url, token, sshPath, role, publicKey, principals, ttl, criticalOptions }) {
+  const path = `${mount(sshPath)}/sign/${role}`;
   const json = { public_key: publicKey };
+  if (criticalOptions) {
+    json.critical_options = criticalOptions;
+  }
   if (principals) {
     json.valid_principals = principals;
   }
@@ -40008,6 +40016,18 @@ async function signKey({ url, token, sshPath, role, publicKey, principals, ttl }
     throw new Error(`POST ${path} returned no certificate`);
   }
   return signed.trim();
+}
+
+// The role's default source-address critical option ('' if it has none).
+async function roleSourceAddress({ url, token, sshPath, role }) {
+  const path = `${mount(sshPath)}/roles/${role}`;
+  let body;
+  try {
+    ({ body } = await client(url, token).get(path));
+  } catch (error) {
+    throw new Error(`GET ${path}: ${describeError(error)}`);
+  }
+  return body?.data?.default_critical_options?.['source-address'] ?? '';
 }
 
 // Revoke the token. Returns false if it was already gone (revoked or

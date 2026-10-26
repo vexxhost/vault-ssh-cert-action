@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 
-import { revokeToken, signKey } from '../src/vault.js';
+import { revokeToken, roleSourceAddress, signKey } from '../src/vault.js';
 
 describe('vault', () => {
   let server;
@@ -23,6 +23,10 @@ describe('vault', () => {
           res.end(JSON.stringify({ data: { signed_key: 'ssh-ed25519-cert-v01@openssh.com AAAA\n' } }));
         } else if (req.url === '/v1/ssh-client-signer/sign/empty') {
           res.end(JSON.stringify({ data: {} }));
+        } else if (req.url === '/v1/ssh-client-signer/roles/deploy') {
+          res.end(JSON.stringify({ data: { default_critical_options: { 'source-address': '10.0.0.0/8,100.64.0.0/10' } } }));
+        } else if (req.url === '/v1/ssh-client-signer/roles/open') {
+          res.end(JSON.stringify({ data: { default_critical_options: {} } }));
         } else if (req.url === '/v1/auth/token/revoke-self') {
           res.statusCode = 204;
           res.end();
@@ -59,6 +63,21 @@ describe('vault', () => {
       /HTTP 400: unknown role; second/);
     await assert.rejects(signKey({ url, token: 'good', sshPath: 'ssh-client-signer', role: 'empty', publicKey: 'k' }),
       /returned no certificate/);
+  });
+
+  it('sends critical options', async () => {
+    requests.length = 0;
+    await signKey({ url, token: 'good', sshPath: 'ssh-client-signer', role: 'deploy', publicKey: 'k',
+      criticalOptions: { 'source-address': '10.0.0.0/8,1.2.3.4/32' } });
+    assert.deepEqual(requests[0].body, { public_key: 'k', critical_options: { 'source-address': '10.0.0.0/8,1.2.3.4/32' } });
+  });
+
+  it("reads a role's source-address", async () => {
+    assert.equal(await roleSourceAddress({ url, token: 'good', sshPath: 'ssh-client-signer', role: 'deploy' }),
+      '10.0.0.0/8,100.64.0.0/10');
+    assert.equal(await roleSourceAddress({ url, token: 'good', sshPath: 'ssh-client-signer', role: 'open' }), '');
+    await assert.rejects(roleSourceAddress({ url, token: 'bad', sshPath: 'ssh-client-signer', role: 'deploy' }),
+      /GET ssh-client-signer\/roles\/deploy: HTTP 403/);
   });
 
   it('revokes', async () => {

@@ -29,6 +29,13 @@ inputs:
   token:
     description: Vault token. Defaults to $VAULT_TOKEN, as exported by hashicorp/vault-action.
     default: ''
+  add-public-ip:
+    description: >-
+      Restrict the certificate to the SSH role's default source-address plus
+      the runner's public IPv4 address (from Azure's instance metadata on
+      GitHub-hosted runners, else ipv4.icanhazip.com). The token needs read on
+      <ssh-path>/roles/<ssh-role>, and its policy must allow critical_options.
+    default: 'false'
   revoke-token:
     description: Revoke the Vault token at the end of the job.
     default: 'true'

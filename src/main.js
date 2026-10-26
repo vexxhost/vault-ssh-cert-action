@@ -9,7 +9,8 @@ import {
   publicKeyLine,
   startAgent,
 } from './ssh.js';
-import { signKey } from './vault.js';
+import { publicIp } from './publicip.js';
+import { roleSourceAddress, signKey } from './vault.js';
 
 async function run() {
   const { url, token } = connection();
@@ -27,14 +28,31 @@ async function run() {
   const { pub, seed } = generateKey();
   const publicKey = publicKeyLine(pub, comment);
 
+  const sshPath = core.getInput('ssh-path') || 'ssh-client-signer';
+
+  // Bind the certificate to the role's source addresses plus this runner's
+  // public address. Requested critical options replace the role's defaults,
+  // so start from those.
+  let criticalOptions;
+  if (core.getBooleanInput('add-public-ip')) {
+    const base = await roleSourceAddress({ url, token, sshPath, role });
+    if (!base) {
+      throw new Error(`add-public-ip: SSH role ${role} has no default source-address to add to`);
+    }
+    const { address, source } = await publicIp();
+    core.info(`Public IP ${address} (from ${source})`);
+    criticalOptions = { 'source-address': `${base},${address}/32` };
+  }
+
   const certificate = await signKey({
     url,
     token,
-    sshPath: core.getInput('ssh-path') || 'ssh-client-signer',
+    sshPath,
     role,
     publicKey,
     principals: core.getInput('principals'),
     ttl: core.getInput('ttl'),
+    criticalOptions,
   });
   const cert = parseCertificate(certificate);
   if (!cert.pub.equals(pub)) {

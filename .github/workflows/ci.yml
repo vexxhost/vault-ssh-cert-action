@@ -85,6 +85,26 @@ jobs:
       - name: Check
         run: test/check.sh automation
 
+      - name: Bound to the role's addresses and the runner's public IP
+        uses: ./
+        with:
+          ssh-role: restricted
+          principals: deploy:test
+          add-public-ip: 'true'
+      - name: Check
+        run: |
+          test/check.sh deploy:test
+          ip=$(curl -fsS https://ipv4.icanhazip.com)
+          ssh-add -L | ssh-keygen -L -f - | grep -F "source-address 127.0.0.1/32,192.0.2.0/24,$ip/32"
+      - name: add-public-ip with a role without source-address
+        id: nobase
+        continue-on-error: true
+        uses: ./
+        with:
+          ssh-role: deploy
+          principals: deploy:test
+          add-public-ip: 'true'
+
       # A second login whose token is passed explicitly, while VAULT_TOKEN and
       # VAULT_ADDR point elsewhere.
       - uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
@@ -152,6 +172,8 @@ jobs:
         env:
           DENIED: ${{ steps.denied.outcome }}
           BADTOKEN: ${{ steps.badtoken.outcome }}
+          NOBASE: ${{ steps.nobase.outcome }}
         run: |
           test "$DENIED" = failure
           test "$BADTOKEN" = failure
+          test "$NOBASE" = failure

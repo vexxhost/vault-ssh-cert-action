@@ -17,7 +17,7 @@ bao() {
 issuer=https://token.actions.githubusercontent.com
 bao sys/auth/github-actions '{"type": "jwt"}'
 bao auth/github-actions/config "{\"oidc_discovery_url\": \"$issuer\", \"bound_issuer\": \"$issuer\"}"
-bao sys/policies/acl/sign '{"policy": "path \"ssh-client-signer/sign/*\" { capabilities = [\"update\"] }"}'
+bao sys/policies/acl/sign '{"policy": "path \"ssh-client-signer/sign/*\" { capabilities = [\"update\"] }\npath \"ssh-client-signer/roles/*\" { capabilities = [\"read\"] }"}'
 jq -n --arg owner "$GITHUB_REPOSITORY_OWNER" --arg repo "$GITHUB_REPOSITORY" '{
   role_type: "jwt", user_claim: "sub", token_policies: ["sign"], token_ttl: "5m",
   bound_audiences: ["https://github.com/\($owner)", "openbao-ssh-cert-action-test"],
@@ -30,6 +30,9 @@ role='{"key_type": "ca", "allow_user_certificates": true, "allow_empty_principal
   "default_extensions": {"permit-pty": ""}, "allowed_extensions": "permit-pty", "ttl": "10m", "max_ttl": "10m"'
 bao ssh-client-signer/roles/deploy "$role, \"allowed_users\": \"deploy:test\", \"default_user\": \"\"}"
 bao ssh-client-signer/roles/automation "$role, \"allowed_users\": \"automation\", \"default_user\": \"automation\"}"
+bao ssh-client-signer/roles/restricted "$role, \"allowed_users\": \"deploy:test\", \"default_user\": \"\",
+  \"allowed_critical_options\": \"source-address\",
+  \"default_critical_options\": {\"source-address\": \"127.0.0.1/32,192.0.2.0/24\"}}"
 
 dir=$(mktemp -d)
 curl -fsS "$VAULT_ADDR/v1/ssh-client-signer/public_key" >"$dir/ca.pub"

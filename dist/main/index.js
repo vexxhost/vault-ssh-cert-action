@@ -39964,6 +39964,50 @@ function removeAllIdentities(socket) {
 
 // EXTERNAL MODULE: ./node_modules/got/dist/source/index.js
 var source = __nccwpck_require__(6757);
+;// CONCATENATED MODULE: ./src/publicip.js
+// The runner's public IPv4 address, for binding a certificate to it.
+
+
+
+// GitHub-hosted runners are Azure VMs without a public address of their own:
+// they go out through a load balancer, whose outbound address Azure's
+// instance metadata service reports.
+const IMDS_URL = 'http://169.254.169.254/metadata/loadbalancer?api-version=2021-02-01';
+// Elsewhere (self-hosted runners), ask Cloudflare's echo service.
+const ECHO_URL = 'https://ipv4.icanhazip.com';
+
+const options = { timeout: { request: 5_000 }, retry: { limit: 0 } };
+
+async function fromImds(url = IMDS_URL) {
+  const { body } = await source(url, { ...options, headers: { Metadata: 'true' }, responseType: 'json' });
+  const addresses = [...new Set((body?.loadbalancer?.outboundRules ?? []).map((rule) => rule.frontendIpAddress))];
+  if (addresses.length !== 1 || !(0,external_node_net_.isIPv4)(addresses[0])) {
+    throw new Error(`expected one outbound IPv4 address, got ${JSON.stringify(addresses)}`);
+  }
+  return addresses[0];
+}
+
+async function fromEcho(url = ECHO_URL) {
+  const address = (await source(url, options).text()).trim();
+  if (!(0,external_node_net_.isIPv4)(address)) {
+    throw new Error(`not an IPv4 address: ${JSON.stringify(address.slice(0, 64))}`);
+  }
+  return address;
+}
+
+// Returns { address, source }; throws if no source answers.
+async function publicIp({ imdsUrl = IMDS_URL, echoUrl = ECHO_URL } = {}) {
+  const errors = [];
+  for (const [source, lookup] of [['Azure instance metadata', () => fromImds(imdsUrl)], [echoUrl, () => fromEcho(echoUrl)]]) {
+    try {
+      return { address: await lookup(), source };
+    } catch (error) {
+      errors.push(`${source}: ${error.message}`);
+    }
+  }
+  throw new Error(`could not find the runner's public IP (${errors.join('; ')})`);
+}
+
 ;// CONCATENATED MODULE: ./src/vault.js
 // The two Vault/OpenBao calls this action makes, with got (as hashicorp/vault-action does).
 
@@ -39989,10 +40033,18 @@ function describeError(error) {
   return error.message;
 }
 
+function mount(sshPath) {
+  return sshPath.replace(/^\/+|\/+$/g, '');
+}
+
 // Sign publicKey (an OpenSSH public key line) with <sshPath>/sign/<role>.
-async function signKey({ url, token, sshPath, role, publicKey, principals, ttl }) {
-  const path = `${sshPath.replace(/^\/+|\/+$/g, '')}/sign/${role}`;
+// criticalOptions, when given, replace the role's default_critical_options.
+async function signKey({ url, token, sshPath, role, publicKey, principals, ttl, criticalOptions }) {
+  const path = `${mount(sshPath)}/sign/${role}`;
   const json = { public_key: publicKey };
+  if (criticalOptions) {
+    json.critical_options = criticalOptions;
+  }
   if (principals) {
     json.valid_principals = principals;
   }
@@ -40010,6 +40062,18 @@ async function signKey({ url, token, sshPath, role, publicKey, principals, ttl }
     throw new Error(`POST ${path} returned no certificate`);
   }
   return signed.trim();
+}
+
+// The role's default source-address critical option ('' if it has none).
+async function roleSourceAddress({ url, token, sshPath, role }) {
+  const path = `${mount(sshPath)}/roles/${role}`;
+  let body;
+  try {
+    ({ body } = await client(url, token).get(path));
+  } catch (error) {
+    throw new Error(`GET ${path}: ${describeError(error)}`);
+  }
+  return body?.data?.default_critical_options?.['source-address'] ?? '';
 }
 
 // Revoke the token. Returns false if it was already gone (revoked or
@@ -40034,6 +40098,7 @@ async function revokeToken({ url, token }) {
 
 
 
+
 async function run() {
   const { url, token } = connection();
   if (!url) {
@@ -40050,14 +40115,31 @@ async function run() {
   const { pub, seed } = generateKey();
   const publicKey = publicKeyLine(pub, comment);
 
+  const sshPath = getInput('ssh-path') || 'ssh-client-signer';
+
+  // Bind the certificate to the role's source addresses plus this runner's
+  // public address. Requested critical options replace the role's defaults,
+  // so start from those.
+  let criticalOptions;
+  if (getBooleanInput('add-public-ip')) {
+    const base = await roleSourceAddress({ url, token, sshPath, role });
+    if (!base) {
+      throw new Error(`add-public-ip: SSH role ${role} has no default source-address to add to`);
+    }
+    const { address, source } = await publicIp();
+    info(`Public IP ${address} (from ${source})`);
+    criticalOptions = { 'source-address': `${base},${address}/32` };
+  }
+
   const certificate = await signKey({
     url,
     token,
-    sshPath: getInput('ssh-path') || 'ssh-client-signer',
+    sshPath,
     role,
     publicKey,
     principals: getInput('principals'),
     ttl: getInput('ttl'),
+    criticalOptions,
   });
   const cert = parseCertificate(certificate);
   if (!cert.pub.equals(pub)) {

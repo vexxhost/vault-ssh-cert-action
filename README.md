@@ -36,7 +36,7 @@ jobs:
           path: github-actions
           role: deploy-my-repo
           exportToken: true
-      - uses: vexxhost/vault-ssh-cert-action@<sha> # v2.0.0
+      - uses: vexxhost/vault-ssh-cert-action@<sha> # v2.1.0
         with:
           ssh-role: deploy
           principals: deploy:my-repo
@@ -50,6 +50,27 @@ configuration.
 The token is revoked at the end of the job, not right after signing, so later
 steps can keep using it (for instance to sign host keys). Set
 `revoke-token: false` to leave it alone.
+
+### Binding the certificate to the runner
+
+With `add-public-ip: true`, the certificate only works from the SSH role's
+default `source-address` plus the runner's own public IPv4 address, so a stolen
+certificate is useless elsewhere. Requested critical options replace the role's
+defaults, so the action reads the role first and adds a `/32` for the runner:
+
+- On GitHub-hosted runners the address comes from Azure's instance metadata
+  service (the outbound address of the load balancer the runner goes out
+  through), without leaving Azure. Note that GitHub runners share these
+  outbound addresses.
+- Elsewhere it asks `https://ipv4.icanhazip.com`.
+- If neither answers, or the role has no default `source-address`, the step
+  fails rather than signing an unrestricted certificate.
+
+The token needs `read` on `<ssh-path>/roles/<ssh-role>`, the role needs
+`allowed_critical_options` to include `source-address`, and the policy must not
+deny `critical_options`. Vault cannot restrict the requested value, so this
+protects against a stolen certificate, not a stolen token: keep tokens
+short-lived and revoked (this action revokes them at the end of the job).
 
 If something else in the job also sets `VAULT_TOKEN` (another vault-action
 login, say), log in with `outputToken: true` instead and pass
@@ -65,6 +86,7 @@ login, say), log in with `outputToken: true` instead and pass
 | `ssh-path` | `ssh-client-signer` | Mount path of the SSH secrets engine. |
 | `url` | `$VAULT_ADDR` | Vault address. |
 | `token` | `$VAULT_TOKEN` | Vault token. |
+| `add-public-ip` | `false` | Restrict the certificate to the role's `source-address` plus the runner's public IP. |
 | `revoke-token` | `true` | Revoke the token at the end of the job. |
 
 ### Outputs
