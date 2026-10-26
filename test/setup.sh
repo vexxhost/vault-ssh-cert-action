@@ -6,12 +6,12 @@ set -euo pipefail
 docker run -d --name openbao -p 127.0.0.1:8200:8200 --cap-add IPC_LOCK "$OPENBAO_IMAGE" \
   server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200 >/dev/null
 for _ in $(seq 30); do
-  curl -fsS "$BAO_ADDR/v1/sys/health" >/dev/null 2>&1 && break
+  curl -fsS "$VAULT_ADDR/v1/sys/health" >/dev/null 2>&1 && break
   sleep 1
 done
 
 bao() {
-  curl -fsS -H "X-Vault-Token: root" -X POST --data "$2" "$BAO_ADDR/v1/$1"
+  curl -fsS -H "X-Vault-Token: root" -X POST --data "$2" "$VAULT_ADDR/v1/$1"
 }
 
 issuer=https://token.actions.githubusercontent.com
@@ -32,7 +32,7 @@ bao ssh-client-signer/roles/deploy "$role, \"allowed_users\": \"deploy:test\", \
 bao ssh-client-signer/roles/automation "$role, \"allowed_users\": \"automation\", \"default_user\": \"automation\"}"
 
 dir=$(mktemp -d)
-curl -fsS "$BAO_ADDR/v1/ssh-client-signer/public_key" >"$dir/ca.pub"
+curl -fsS "$VAULT_ADDR/v1/ssh-client-signer/public_key" >"$dir/ca.pub"
 printf 'deploy:test\nautomation\n' >"$dir/principals"
 ssh-keygen -q -t ed25519 -N '' -f "$dir/host_key"
 cat >"$dir/sshd_config" <<EOF

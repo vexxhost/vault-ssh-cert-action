@@ -33,7 +33,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      BAO_ADDR: http://127.0.0.1:8200
+      VAULT_ADDR: http://127.0.0.1:8200
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -45,67 +45,85 @@ jobs:
         env:
           OPENBAO_IMAGE: quay.io/openbao/openbao:2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
 
-      - name: Default audience, explicit principal
+      # The documented flow: vault-action exports VAULT_TOKEN, VAULT_ADDR is
+      # set on the job.
+      - uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: github-actions
+          role: ci
+          exportToken: true
+      - name: Explicit principal
         id: principal
         uses: ./
         with:
-          url: ${{ env.BAO_ADDR }}
-          role: ci
           ssh-role: deploy
           principals: deploy:test
       - name: Check
         env:
           KEY: ${{ steps.principal.outputs.key-path }}
           CERT: ${{ steps.principal.outputs.cert-path }}
-          TOKEN: ${{ steps.principal.outputs.token }}
-        run: |
-          test "$CERT" = "$KEY-cert.pub"
-          test -z "$TOKEN"
-          ssh-keygen -L -f "$CERT" | grep -A1 'Principals:' | grep -qx '[[:space:]]*deploy:test'
-          ssh -i "$KEY" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no "$USER@127.0.0.1" true
+        run: test/check.sh deploy:test
 
-      - name: Custom audience, role default principal, keep the token
+      - name: The role's default principal, a TTL
         id: default
         uses: ./
         with:
-          url: ${{ env.BAO_ADDR }}/
-          role: ci
-          audience: openbao-ssh-cert-action-test
           ssh-role: automation
           ttl: 5m
-          revoke-token: 'false'
       - name: Check
         env:
           KEY: ${{ steps.default.outputs.key-path }}
           CERT: ${{ steps.default.outputs.cert-path }}
-          TOKEN: ${{ steps.default.outputs.token }}
-        run: |
-          ssh-keygen -L -f "$CERT" | grep -A1 'Principals:' | grep -qx '[[:space:]]*automation'
-          curl -fsS -H "X-Vault-Token: $TOKEN" "$BAO_ADDR/v1/auth/token/lookup-self" >/dev/null
-          ssh -i "$KEY" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no "$USER@127.0.0.1" true
+        run: test/check.sh automation
+
+      # A second login whose token is passed explicitly, while VAULT_TOKEN and
+      # VAULT_ADDR point elsewhere.
+      - uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        id: login
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: github-actions
+          role: ci
+          outputToken: true
+      - name: Explicit url and token
+        id: explicit
+        uses: ./
+        env:
+          VAULT_ADDR: http://127.0.0.1:1
+          VAULT_TOKEN: wrong
+        with:
+          url: http://127.0.0.1:8200/
+          token: ${{ steps.login.outputs.vault_token }}
+          ssh-role: deploy
+          principals: deploy:test
+      - name: Check
+        env:
+          KEY: ${{ steps.explicit.outputs.key-path }}
+          CERT: ${{ steps.explicit.outputs.cert-path }}
+        run: test/check.sh deploy:test
 
       - name: A principal the role does not allow
         id: denied
         continue-on-error: true
         uses: ./
         with:
-          url: ${{ env.BAO_ADDR }}
-          role: ci
           ssh-role: deploy
           principals: root
-      - name: A role that does not exist
-        id: badrole
+      - name: A bad token
+        id: badtoken
         continue-on-error: true
         uses: ./
         with:
-          url: ${{ env.BAO_ADDR }}
-          role: nope
+          token: wrong
           ssh-role: deploy
           principals: deploy:test
       - name: Check
         env:
           DENIED: ${{ steps.denied.outcome }}
-          BADROLE: ${{ steps.badrole.outcome }}
+          BADTOKEN: ${{ steps.badtoken.outcome }}
         run: |
           test "$DENIED" = failure
-          test "$BADROLE" = failure
+          test "$BADTOKEN" = failure

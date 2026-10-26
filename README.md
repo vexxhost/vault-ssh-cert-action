@@ -1,11 +1,16 @@
-# openbao-ssh-cert-action
+# vault-ssh-cert-action
 
-A composite GitHub Action that logs in to [OpenBao](https://openbao.org) (or
-HashiCorp Vault) with the job's GitHub OIDC token, generates a fresh SSH key
-and has the SSH secrets engine sign it, for the principals you ask for.
+A composite GitHub Action that generates an SSH key and has the
+[SSH secrets engine](https://developer.hashicorp.com/vault/docs/secrets/ssh/signed-ssh-certificates)
+of HashiCorp Vault sign it for the principals you ask for. It works the same
+with [OpenBao](https://openbao.org).
 
-It needs nothing but `bash`, `curl`, `jq` and `ssh-keygen`, all present on
-GitHub's runners.
+It does not log in: run [`hashicorp/vault-action`](https://github.com/hashicorp/vault-action)
+first with `exportToken: true`, and this action uses its `VAULT_TOKEN`. Like
+the Vault CLI, it reads the address from `VAULT_ADDR`, which vault-action does
+not export, so set it on the job and pass it to vault-action too.
+
+It needs only `curl`, `jq` and `ssh-keygen`, all present on GitHub's runners.
 
 ## Usage
 
@@ -16,38 +21,46 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      VAULT_ADDR: https://vault.example.com
     steps:
-      - id: ssh
-        uses: vexxhost/openbao-ssh-cert-action@<sha> # v1
+      - uses: hashicorp/vault-action@<sha> # v4.0.0
         with:
-          url: https://openbao.example.com
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          path: github-actions
           role: deploy-my-repo
+          exportToken: true
+      - id: ssh
+        uses: vexxhost/vault-ssh-cert-action@<sha> # v1.0.0
+        with:
           ssh-role: deploy
           principals: deploy:my-repo
-      - run: ansible-playbook -i inventory site.yml
+      - run: ansible-playbook -i inventory --private-key "$SSH_KEY" site.yml
         env:
-          ANSIBLE_PRIVATE_KEY_FILE: ${{ steps.ssh.outputs.key-path }}
+          SSH_KEY: ${{ steps.ssh.outputs.key-path }}
 ```
 
-The certificate is written next to the key as `<key>-cert.pub`, so
-`ssh -i <key>` (and Ansible's `private_key_file`) picks it up without further
+The certificate is written next to the key as `<key>-cert.pub`, so `ssh -i
+<key>` (and Ansible's `--private-key`) picks it up without further
 configuration. Both live in `$RUNNER_TEMP`, which is emptied at the end of the
 job.
+
+If something else in the job also sets `VAULT_TOKEN` (another vault-action
+login, say), log in with `outputToken: true` instead and pass
+`token: ${{ steps.<login>.outputs.vault_token }}`.
 
 ### Inputs
 
 | Input | Default | |
 |---|---|---|
-| `url` | | OpenBao address. Required. |
-| `role` | | JWT auth role to log in with. Required. |
-| `auth-path` | `github-actions` | Mount path of the JWT auth method. |
-| `audience` | GitHub's default | `aud` to request for the OIDC token. Empty leaves it to GitHub: `https://github.com/<owner>`. |
-| `ssh-path` | `ssh-client-signer` | Mount path of the SSH secrets engine. |
 | `ssh-role` | | SSH role to sign with. Required. |
 | `principals` | role's `default_user` | Comma-separated `valid_principals`. |
 | `ttl` | role's | Certificate TTL. |
+| `ssh-path` | `ssh-client-signer` | Mount path of the SSH secrets engine. |
 | `key-type` | `ed25519` | `ssh-keygen -t`. |
-| `revoke-token` | `true` | Revoke the OpenBao token after signing. Set to `false` to keep it for later steps (`token` output), e.g. when the same job also signs host keys. |
+| `url` | `$VAULT_ADDR` | Vault address. |
+| `token` | `$VAULT_TOKEN` | Vault token. |
 
 ### Outputs
 
@@ -55,26 +68,23 @@ job.
 |---|---|
 | `key-path` | Private key. |
 | `cert-path` | Signed certificate (`<key-path>-cert.pub`). |
-| `token` | OpenBao token, masked. Only set when `revoke-token` is `false`. |
 
-The step fails, with OpenBao's error message, if the login or the signing is
-refused; use `continue-on-error` to treat a certificate as optional.
+The step fails with Vault's error message if signing is refused; use
+`continue-on-error` to treat the certificate as optional.
 
-## OpenBao side
+## Vault side
 
-All restrictions belong in OpenBao:
+All restrictions belong in Vault:
 
-- **JWT auth** with `oidc_discovery_url` and `bound_issuer` set to
-  `https://token.actions.githubusercontent.com`. Bind each role with
-  `bound_claims` (`repository`, `job_workflow_ref`, ...) or `bound_subject`, and
-  `bound_audiences` to the audience the workflow requests (by default
-  `https://github.com/<owner>`).
-- **SSH role** with `allowed_users` limited to the principals the workflow may
-  request; with `allow_empty_principals: false` and an empty `default_user`,
-  the workflow must name its principal. A policy's `required_parameters` /
-  `allowed_parameters` on `valid_principals` can narrow a shared role per
-  login.
-- The login's policy needs `update` on `<ssh-path>/sign/<ssh-role>`.
+- The **SSH role**'s `allowed_users` limits the principals a workflow may
+  request. With `allow_empty_principals: false` and an empty `default_user`,
+  the workflow must name its principal.
+- The token's policy needs `update` on `<ssh-path>/sign/<ssh-role>`. A policy's
+  `required_parameters` / `allowed_parameters` on `valid_principals` can narrow
+  a shared role per login.
+- The **JWT role** vault-action logs in with decides which repositories and
+  workflows get that policy (`bound_claims`, `bound_subject`,
+  `bound_audiences`).
 
 ## License
 
