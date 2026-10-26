@@ -1,0 +1,20 @@
+{
+  "name": "vault-ssh-cert-action",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "ncc build src/main.js -o dist/main --license licenses.txt && ncc build src/post.js -o dist/post --license licenses.txt",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@actions/core": "^3.0.1",
+    "got": "^11.8.6"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.45.0"
+  }
+}

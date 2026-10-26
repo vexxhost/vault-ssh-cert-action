@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -17,7 +17,17 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck sign.sh test/*.sh
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: dist/ is up to date
+        run: |
+          npm run build
+          git diff --exit-code dist
+      - run: shellcheck test/*.sh
       - name: actionlint
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
@@ -40,10 +50,14 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The runner starts no ssh-agent
+        run: test -z "${SSH_AUTH_SOCK:-}"
       - name: Start OpenBao and sshd
         run: test/setup.sh
         env:
           OPENBAO_IMAGE: quay.io/openbao/openbao:2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
+      - name: Mark the time
+        run: touch "$RUNNER_TEMP/marker"
 
       # The documented flow: vault-action exports VAULT_TOKEN, VAULT_ADDR is
       # set on the job.
@@ -61,21 +75,14 @@ jobs:
           ssh-role: deploy
           principals: deploy:test
       - name: Check
-        env:
-          KEY: ${{ steps.principal.outputs.key-path }}
-          CERT: ${{ steps.principal.outputs.cert-path }}
         run: test/check.sh deploy:test
 
       - name: The role's default principal, a TTL
-        id: default
         uses: ./
         with:
           ssh-role: automation
           ttl: 5m
       - name: Check
-        env:
-          KEY: ${{ steps.default.outputs.key-path }}
-          CERT: ${{ steps.default.outputs.cert-path }}
         run: test/check.sh automation
 
       # A second login whose token is passed explicitly, while VAULT_TOKEN and
@@ -101,9 +108,30 @@ jobs:
           principals: deploy:test
       - name: Check
         env:
-          KEY: ${{ steps.explicit.outputs.key-path }}
-          CERT: ${{ steps.explicit.outputs.cert-path }}
-        run: test/check.sh deploy:test
+          SOCK: ${{ steps.explicit.outputs.ssh-auth-sock }}
+        run: |
+          test "$SOCK" = "$SSH_AUTH_SOCK"
+          test/check.sh deploy:test
+
+      # Run this step's post (normally at the end of the job) now, to check it.
+      - name: Clean up the last one early
+        env:
+          SOCK: ${{ steps.explicit.outputs.ssh-auth-sock }}
+          TOKEN: ${{ steps.login.outputs.vault_token }}
+        run: |
+          env "STATE_agent-pid=$SSH_AGENT_PID" "STATE_agent-dir=$(dirname "$SOCK")" \
+            INPUT_URL=http://127.0.0.1:8200 "INPUT_TOKEN=$TOKEN" INPUT_REVOKE-TOKEN=true \
+            node dist/post/index.js
+          test ! -e "$SOCK"
+      - name: Check the cleanup
+        env:
+          SOCK: ${{ steps.explicit.outputs.ssh-auth-sock }}
+          TOKEN: ${{ steps.login.outputs.vault_token }}
+        run: |
+          if pgrep -f "ssh-agent -D -a $SOCK" >/dev/null; then exit 1; fi
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "X-Vault-Token: $TOKEN" "$VAULT_ADDR/v1/auth/token/lookup-self")" = 403
+          # No key or certificate was ever written to disk.
+          test -z "$(find "$RUNNER_TEMP" -type f -newer "$RUNNER_TEMP/marker" -not -path '*/_runner_file_commands/*' -not -name '*.sh')"
 
       - name: A principal the role does not allow
         id: denied

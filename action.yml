@@ -1,7 +1,8 @@
 name: Vault SSH certificate
 description: >-
-  Generate an SSH key and have HashiCorp Vault's (or OpenBao's) SSH secrets
-  engine sign it. Log in first with hashicorp/vault-action (exportToken: true).
+  Sign an in-memory SSH key with HashiCorp Vault's (or OpenBao's) SSH secrets
+  engine and load it into a private ssh-agent for the rest of the job. Log in
+  first with hashicorp/vault-action (exportToken: true).
 author: VEXXHOST
 branding:
   icon: lock
@@ -22,35 +23,26 @@ inputs:
   ssh-path:
     description: Mount path of the SSH secrets engine.
     default: ssh-client-signer
-  key-type:
-    description: ssh-keygen key type.
-    default: ed25519
   url:
     description: Vault address. Defaults to $VAULT_ADDR.
     default: ''
   token:
     description: Vault token. Defaults to $VAULT_TOKEN, as exported by hashicorp/vault-action.
     default: ''
+  revoke-token:
+    description: Revoke the Vault token at the end of the job.
+    default: 'true'
 
 outputs:
-  key-path:
-    description: Private key. The certificate sits next to it as <key>-cert.pub, where ssh -i finds it.
-    value: ${{ steps.sign.outputs.key-path }}
-  cert-path:
-    description: Signed SSH certificate.
-    value: ${{ steps.sign.outputs.cert-path }}
+  ssh-auth-sock:
+    description: The agent's socket, also exported as SSH_AUTH_SOCK.
+  certificate:
+    description: The signed certificate (public).
+  public-key:
+    description: The certified public key.
 
 runs:
-  using: composite
-  steps:
-    - id: sign
-      shell: bash
-      env:
-        INPUT_SSH_ROLE: ${{ inputs.ssh-role }}
-        INPUT_PRINCIPALS: ${{ inputs.principals }}
-        INPUT_TTL: ${{ inputs.ttl }}
-        INPUT_SSH_PATH: ${{ inputs.ssh-path }}
-        INPUT_KEY_TYPE: ${{ inputs.key-type }}
-        INPUT_URL: ${{ inputs.url }}
-        INPUT_TOKEN: ${{ inputs.token }}
-      run: "${GITHUB_ACTION_PATH}/sign.sh"
+  using: node24
+  main: dist/main/index.js
+  post: dist/post/index.js
+  post-if: always()
