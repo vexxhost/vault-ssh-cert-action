@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
-    "got": "^11.8.6"
+    "got": "^16.1.0"
   },
   "devDependencies": {
     "@vercel/ncc": "^0.45.0"
