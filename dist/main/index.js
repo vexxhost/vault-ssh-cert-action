@@ -40010,10 +40010,16 @@ async function signKey({ url, token, sshPath, role, publicKey, principals, ttl }
   return signed.trim();
 }
 
+// Revoke the token. Returns false if it was already gone (revoked or
+// expired: Vault answers 403 for an invalid token).
 async function revokeToken({ url, token }) {
   try {
     await client(url, token).post('auth/token/revoke-self');
+    return true;
   } catch (error) {
+    if (error.response?.statusCode === 403) {
+      return false;
+    }
     throw new Error(`POST auth/token/revoke-self: ${describeError(error)}`);
   }
 }

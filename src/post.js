@@ -24,8 +24,11 @@ async function run() {
     const { url, token } = connection();
     if (url && token) {
       try {
-        await revokeToken({ url, token });
-        core.info('Revoked the Vault token');
+        if (await revokeToken({ url, token })) {
+          core.info('Revoked the Vault token');
+        } else {
+          core.info('The Vault token was already revoked or expired');
+        }
       } catch (error) {
         core.warning(`could not revoke the Vault token: ${error.message}`);
       }

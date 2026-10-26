@@ -63,8 +63,9 @@ describe('vault', () => {
 
   it('revokes', async () => {
     requests.length = 0;
-    await revokeToken({ url, token: 'good' });
+    assert.equal(await revokeToken({ url, token: 'good' }), true);
     assert.deepEqual(requests.map((r) => r.url), ['/v1/auth/token/revoke-self']);
-    await assert.rejects(revokeToken({ url, token: 'bad' }), /HTTP 403: permission denied/);
+    assert.equal(await revokeToken({ url, token: 'bad' }), false);
+    await assert.rejects(revokeToken({ url: 'http://127.0.0.1:1', token: 'good' }), /revoke-self/);
   });
 });
