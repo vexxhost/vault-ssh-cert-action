@@ -1,0 +1,108 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck sign.sh test/*.sh
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+  # A throwaway OpenBao that trusts this job's GitHub OIDC tokens, and an sshd
+  # that trusts its SSH CA: the certificates must actually log in.
+  e2e:
+    runs-on: ubuntu-latest
+    # Fork pull requests get no OIDC token.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BAO_ADDR: http://127.0.0.1:8200
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start OpenBao and sshd
+        run: test/setup.sh
+        env:
+          OPENBAO_IMAGE: quay.io/openbao/openbao:2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
+
+      - name: Default audience, explicit principal
+        id: principal
+        uses: ./
+        with:
+          url: ${{ env.BAO_ADDR }}
+          role: ci
+          ssh-role: deploy
+          principals: deploy:test
+      - name: Check
+        env:
+          KEY: ${{ steps.principal.outputs.key-path }}
+          CERT: ${{ steps.principal.outputs.cert-path }}
+          TOKEN: ${{ steps.principal.outputs.token }}
+        run: |
+          test "$CERT" = "$KEY-cert.pub"
+          test -z "$TOKEN"
+          ssh-keygen -L -f "$CERT" | grep -A1 'Principals:' | grep -qx '[[:space:]]*deploy:test'
+          ssh -i "$KEY" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no "$USER@127.0.0.1" true
+
+      - name: Custom audience, role default principal, keep the token
+        id: default
+        uses: ./
+        with:
+          url: ${{ env.BAO_ADDR }}/
+          role: ci
+          audience: openbao-ssh-cert-action-test
+          ssh-role: automation
+          ttl: 5m
+          revoke-token: 'false'
+      - name: Check
+        env:
+          KEY: ${{ steps.default.outputs.key-path }}
+          CERT: ${{ steps.default.outputs.cert-path }}
+          TOKEN: ${{ steps.default.outputs.token }}
+        run: |
+          ssh-keygen -L -f "$CERT" | grep -A1 'Principals:' | grep -qx '[[:space:]]*automation'
+          curl -fsS -H "X-Vault-Token: $TOKEN" "$BAO_ADDR/v1/auth/token/lookup-self" >/dev/null
+          ssh -i "$KEY" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no "$USER@127.0.0.1" true
+
+      - name: A principal the role does not allow
+        id: denied
+        continue-on-error: true
+        uses: ./
+        with:
+          url: ${{ env.BAO_ADDR }}
+          role: ci
+          ssh-role: deploy
+          principals: root
+      - name: A role that does not exist
+        id: badrole
+        continue-on-error: true
+        uses: ./
+        with:
+          url: ${{ env.BAO_ADDR }}
+          role: nope
+          ssh-role: deploy
+          principals: deploy:test
+      - name: Check
+        run: |
+          test "${{ steps.denied.outcome }}" = failure
+          test "${{ steps.badrole.outcome }}" = failure

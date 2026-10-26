@@ -1,0 +1,75 @@
+name: OpenBao SSH certificate
+description: >-
+  Log in to OpenBao (or Vault) with the job's GitHub OIDC token, generate an
+  SSH key and have the SSH secrets engine sign it for the given principals.
+author: VEXXHOST
+branding:
+  icon: lock
+  color: blue
+
+inputs:
+  url:
+    description: OpenBao address, e.g. https://openbao.example.com.
+    required: true
+  role:
+    description: JWT auth role to log in with.
+    required: true
+  auth-path:
+    description: Mount path of the JWT auth method.
+    default: github-actions
+  audience:
+    description: >-
+      Audience (aud claim) to request for the GitHub OIDC token. Empty uses
+      GitHub's default, https://github.com/<owner>.
+    default: ''
+  ssh-path:
+    description: Mount path of the SSH secrets engine.
+    default: ssh-client-signer
+  ssh-role:
+    description: SSH role to sign with.
+    required: true
+  principals:
+    description: >-
+      Comma-separated principals to request (valid_principals). Empty leaves
+      them to the SSH role's default_user.
+    default: ''
+  ttl:
+    description: Requested certificate TTL (e.g. 1h). Empty uses the role's.
+    default: ''
+  key-type:
+    description: ssh-keygen key type.
+    default: ed25519
+  revoke-token:
+    description: >-
+      Revoke the OpenBao token once the certificate is signed. Set to false to
+      keep it for later steps through the token output.
+    default: 'true'
+
+outputs:
+  key-path:
+    description: Private key. The certificate sits next to it as <key>-cert.pub, where ssh -i finds it.
+    value: ${{ steps.sign.outputs.key-path }}
+  cert-path:
+    description: Signed SSH certificate.
+    value: ${{ steps.sign.outputs.cert-path }}
+  token:
+    description: OpenBao token (masked); empty unless revoke-token is false.
+    value: ${{ steps.sign.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - id: sign
+      shell: bash
+      env:
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_ROLE: ${{ inputs.role }}
+        INPUT_AUTH_PATH: ${{ inputs.auth-path }}
+        INPUT_AUDIENCE: ${{ inputs.audience }}
+        INPUT_SSH_PATH: ${{ inputs.ssh-path }}
+        INPUT_SSH_ROLE: ${{ inputs.ssh-role }}
+        INPUT_PRINCIPALS: ${{ inputs.principals }}
+        INPUT_TTL: ${{ inputs.ttl }}
+        INPUT_KEY_TYPE: ${{ inputs.key-type }}
+        INPUT_REVOKE_TOKEN: ${{ inputs.revoke-token }}
+      run: "${GITHUB_ACTION_PATH}/sign.sh"
