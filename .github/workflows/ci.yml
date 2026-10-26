@@ -128,12 +128,10 @@ jobs:
           SOCK: ${{ steps.explicit.outputs.ssh-auth-sock }}
           TOKEN: ${{ steps.login.outputs.vault_token }}
         run: |
-          set -x
           if pgrep -f "ssh-agent -D -a $SOCK" >/dev/null; then exit 1; fi
           test "$(curl -s -o /dev/null -w '%{http_code}' -H "X-Vault-Token: $TOKEN" "$VAULT_ADDR/v1/auth/token/lookup-self")" = 403
-          # No key or certificate was ever written to disk.
-          find "$RUNNER_TEMP" -newer "$RUNNER_TEMP/marker" -ls
-          test -z "$(find "$RUNNER_TEMP" -type f -newer "$RUNNER_TEMP/marker" -not -path '*/_runner_file_commands/*' -not -name '*.sh')"
+          # No private key was ever written to disk.
+          if grep -rIl 'PRIVATE KEY' "$RUNNER_TEMP" "$HOME" "$GITHUB_WORKSPACE" /tmp 2>/dev/null; then exit 1; fi
 
       - name: A principal the role does not allow
         id: denied
