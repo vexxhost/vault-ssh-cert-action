@@ -103,6 +103,9 @@ jobs:
           ssh-role: deploy
           principals: deploy:test
       - name: Check
+        env:
+          DENIED: ${{ steps.denied.outcome }}
+          BADROLE: ${{ steps.badrole.outcome }}
         run: |
-          test "${{ steps.denied.outcome }}" = failure
-          test "${{ steps.badrole.outcome }}" = failure
+          test "$DENIED" = failure
+          test "$BADROLE" = failure

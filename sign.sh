@@ -3,8 +3,9 @@
 # Inputs come from action.yml as INPUT_* environment variables.
 set -euo pipefail
 
+# stderr: fail is also called inside $(...), where stdout is captured.
 fail() {
-  echo "::error title=OpenBao SSH certificate::$*"
+  echo "::error title=OpenBao SSH certificate::$*" >&2
   exit 1
 }
 
@@ -60,7 +61,7 @@ echo "::add-mask::$token"
 
 revoke() {
   if [[ ${INPUT_REVOKE_TOKEN:-true} != false ]]; then
-    bao POST auth/token/revoke-self >/dev/null || echo "::warning title=OpenBao SSH certificate::could not revoke the token"
+    bao POST auth/token/revoke-self >/dev/null || echo "::warning title=OpenBao SSH certificate::could not revoke the token" >&2
   fi
 }
 trap revoke EXIT
