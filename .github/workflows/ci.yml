@@ -30,7 +30,7 @@ jobs:
       - run: shellcheck test/*.sh
       - name: actionlint
         run: |
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
           ./actionlint -color
 
   # A throwaway OpenBao that trusts this job's GitHub OIDC tokens, and an sshd
@@ -128,9 +128,11 @@ jobs:
           SOCK: ${{ steps.explicit.outputs.ssh-auth-sock }}
           TOKEN: ${{ steps.login.outputs.vault_token }}
         run: |
+          set -x
           if pgrep -f "ssh-agent -D -a $SOCK" >/dev/null; then exit 1; fi
           test "$(curl -s -o /dev/null -w '%{http_code}' -H "X-Vault-Token: $TOKEN" "$VAULT_ADDR/v1/auth/token/lookup-self")" = 403
           # No key or certificate was ever written to disk.
+          find "$RUNNER_TEMP" -newer "$RUNNER_TEMP/marker" -ls
           test -z "$(find "$RUNNER_TEMP" -type f -newer "$RUNNER_TEMP/marker" -not -path '*/_runner_file_commands/*' -not -name '*.sh')"
 
       - name: A principal the role does not allow
