@@ -7,7 +7,9 @@ function client(url, token) {
     headers: { 'X-Vault-Token': token },
     responseType: 'json',
     timeout: { request: 30_000 },
-    retry: { limit: 2, methods: ['POST'] },
+    // got 11's retries leak an uncaught error on Node 24 when a connection is
+    // refused; one attempt, and the step fails with the error.
+    retry: { limit: 0 },
   });
 }
 
